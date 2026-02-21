@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Road Route Extraction - Upload</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f7f7f9; color: #222; }
+    .container { max-width: 720px; margin: 48px auto; background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+    h1 { margin-top: 0; }
+    .upload { display:flex; gap: 12px; align-items: center; }
+    input[type=file] { flex: 1; }
+    button { background: #007bff; color: #fff; padding: 10px 14px; border: none; border-radius: 6px; cursor: pointer; }
+    .note { color: #666; margin-top: 12px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Road Route Extraction</h1>
+  <p>Upload a satellite image (PNG, JPG, TIFF) and the server will run the model and display the extracted road skeleton.</p>
+  <form action="/upload" method="post" enctype="multipart/form-data">
+    <div class="upload">
+      <input type="file" name="file" accept="image/*">
+      <button type="submit">Upload & Run</button>
+    </div>
+    <div class="note">Example image: assets/demo_satellite.tiff</div>
+  </form>
+</div>
+</body>
+</html>
+

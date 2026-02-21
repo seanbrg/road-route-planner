@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Result - Road Route Extraction</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f7f7f9; color: #222; }
+    .container { max-width: 900px; margin: 48px auto; background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+    img { max-width: 100%; height: auto; display:block; margin: 0 auto 12px; }
+    .actions { display:flex; gap:12px; justify-content:center; margin-top: 12px; }
+    a.button { text-decoration:none; background:#007bff; color:#fff; padding:8px 12px; border-radius:6px; }
+    pre { background:#f1f1f3; padding:12px; border-radius:6px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Extraction Result</h1>
+  {% if error %}
+    <p style="color: #c00">Error during processing:</p>
+    <pre>{{ error }}</pre>
+    <div class="actions">
+      <a class="button" href="/">Back</a>
+    </div>
+  {% else %}
+    <p>Here is the skeletonized road mask extracted from your image:</p>
+    <div id="resultWrap" style="text-align:center;">
+      <div style="display:inline-block; position:relative;">
+        <img id="resultImage" src="{{ image_url }}" alt="Result image">
+        <!-- walker will be positioned absolutely over the image -->
+        {% if walker_url and path_url %}
+          <img id="walker" src="{{ walker_url }}" alt="walker" style="position:absolute; left:0; top:0; transform: translate(-50%,-50%); display:none; pointer-events:none;">
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="actions">
+      <a class="button" href="/">Process another image</a>
+      <a class="button" href="{{ image_url }}" download>Download result</a>
+      {% if reannotate_url %}
+        <a class="button" href="{{ reannotate_url }}">Re-annotate (reuse skeleton)</a>
+      {% endif %}
+    </div>
+
+    {% if path_url and walker_url %}
+    <script>
+    (function(){
+      const img = document.getElementById('resultImage');
+      const walker = document.getElementById('walker');
+      const pathUrl = '{{ path_url }}';
+
+      function mapPointToDisplay(pt, img){
+        // pt is [x, y] in image pixel coords
+        const naturalW = img.naturalWidth || img.width;
+        const naturalH = img.naturalHeight || img.height;
+        const dispW = img.clientWidth;
+        const dispH = img.clientHeight;
+        const scaleX = dispW / naturalW;
+        const scaleY = dispH / naturalH;
+        return { x: pt[0] * scaleX + img.getBoundingClientRect().left, y: pt[1] * scaleY + img.getBoundingClientRect().top, dx: pt[0]*scaleX, dy: pt[1]*scaleY };
+      }
+
+      function startAnimation(points){
+        if(!points || points.length === 0) return;
+        // prepare display positions relative to image container
+        const rect = img.getBoundingClientRect();
+        const naturalW = img.naturalWidth || img.width;
+        const naturalH = img.naturalHeight || img.height;
+        const dispW = img.clientWidth;
+        const dispH = img.clientHeight;
+        const scaleX = dispW / naturalW;
+        const scaleY = dispH / naturalH;
+
+        const displayPoints = points.map(p => ({ x: p[0]*scaleX, y: p[1]*scaleY }));
+
+        walker.style.display = 'block';
+        // set walker size (responsive)
+        walker.style.width = Math.max(24, Math.min(64, dispW * 0.04)) + 'px';
+
+        // animation: move along points in totalDuration ms
+        const totalDuration = Math.max(2000, Math.min(15000, displayPoints.length * 15));
+        let start = null;
+        function step(ts){
+          if(!start) start = ts;
+          const t = ts - start;
+          const frac = Math.min(1, t / totalDuration);
+          const idxFloat = frac * (displayPoints.length - 1);
+          const i = Math.floor(idxFloat);
+          const alpha = idxFloat - i;
+          const p0 = displayPoints[i];
+          const p1 = displayPoints[Math.min(i+1, displayPoints.length-1)];
+          const cx = p0.x + (p1.x - p0.x) * alpha;
+          const cy = p0.y + (p1.y - p0.y) * alpha;
+          // position walker relative to image container
+          // cx/cy are already relative to the image display top-left; set walker within the relative container
+          walker.style.left = (cx) + 'px';
+          walker.style.top = (cy) + 'px';
+
+          if(frac < 1){
+            requestAnimationFrame(step);
+          } else {
+            // keep walker at end
+          }
+        }
+        requestAnimationFrame(step);
+      }
+
+      function init(){
+        fetch(pathUrl).then(r=>r.json()).then(data=>{
+          // data expected as [[x,y],...]
+          // ensure image loaded to have correct sizes
+          if(img.complete && img.naturalWidth){
+            startAnimation(data);
+          } else {
+            img.addEventListener('load', ()=> startAnimation(data));
+          }
+        }).catch(err=>{
+          console.warn('Failed to load path JSON for animation', err);
+        });
+      }
+
+      // run after DOM ready
+      if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+    })();
+    </script>
+    {% endif %}
+  {% endif %}
+   </div>
+ </body>
+ </html>
+

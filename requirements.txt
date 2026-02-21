@@ -1,0 +1,9 @@
+flask
+werkzeug
+pillow
+numpy
+opencv-python
+scikit-image
+scipy
+matplotlib
+

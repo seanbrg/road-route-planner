@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Annotate - Select Two Points</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f7f7f9; color: #222; }
+    .container { max-width: 900px; margin: 24px auto; background: white; padding: 18px; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+    .hint { color: #666; margin-bottom: 8px; }
+    #imageWrap { position: relative; display:inline-block; }
+    #annotImage { max-width: 100%; height: auto; display:block; background: #f1f1f3; }
+    .marker { position: absolute; width: 12px; height: 12px; border-radius: 6px; transform: translate(-50%, -50%); pointer-events: none; }
+    .marker.a { background: rgba(0,123,255,0.9); }
+    .marker.b { background: rgba(220,53,69,0.9); }
+    .marker.barrier { box-shadow: 0 0 0 3px rgba(0,0,0,0.25) inset; border: 2px solid #000; }
+    .barrier-extra { position:absolute; width:10px; height:10px; border-radius:5px; background: rgba(0,180,0,0.9); transform: translate(-50%, -50%); cursor:pointer; }
+    .controls { margin-top: 12px; display:flex; gap:8px; align-items:center; }
+    button { background: #007bff; color: #fff; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer; }
+    .small { background: #6c757d; }
+    .warning { color: #c00; margin-top: 12px; }
+    .point-options { display:flex; gap:12px; align-items:center; margin-left:8px; }
+    .point-options label { font-size: 14px; color:#444; }
+    #barrierToggle.active { background: #28a745; }
+    #barrierList { margin-left: 8px; color:#444; font-size:14px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>Select Two Points on the Image</h2>
+  <p class="hint">Click two points on the image where you'd like to indicate the route endpoints. Optionally mark either point as a barrier (blocking the path). You can also add extra barrier points by toggling Add Barrier mode and clicking the image. You may reset selection and try again.</p>
+
+  <div id="imageWrap">
+    <img id="annotImage" src="{{ image_url }}" alt="Upload" crossorigin="anonymous">
+    <div id="markerA" class="marker a" style="display:none;"></div>
+    <div id="markerB" class="marker b" style="display:none;"></div>
+  </div>
+
+  <div id="previewNotice" style="margin-top:8px;color:#666;">
+    {% if preview_failed %}
+      <div class="warning">Preview could not be generated. Your browser might not display the uploaded file (e.g. TIFF). You can <a id="downloadOriginal" href="/uploads/{{ filename }}" target="_blank">open/download the original file</a> or re-upload a PNG/JPG for annotation.</div>
+    {% else %}
+      <div id="loadingNotice">Loading preview...</div>
+    {% endif %}
+    {% if use_cached|default(False) %}
+      <div style="margin-top:8px;color:#2a7f2a">Using cached skeleton from previous run — model will not be re-run.</div>
+    {% endif %}
+  </div>
+
+  <form id="pointsForm" action="/process" method="post">
+    <input type="hidden" name="filename" value="{{ filename }}">
+    <input type="hidden" name="x1" id="x1">
+    <input type="hidden" name="y1" id="y1">
+    <input type="hidden" name="x2" id="x2">
+    <input type="hidden" name="y2" id="y2">
+    <!-- Hidden barrier flags for legacy A/B checkboxes: '1' means mark as barrier -->
+    <input type="hidden" name="barrierA" id="barrierA" value="0">
+    <input type="hidden" name="barrierB" id="barrierB" value="0">
+    <!-- Hidden field to carry extra barriers as JSON array of [y,x] (row, col) -->
+    <input type="hidden" name="barriers" id="barriers" value="[]">
+    <!-- If true, tell the server to reuse the cached skeleton (do not run model) -->
+    <input type="hidden" name="use_cached" id="use_cached" value="{{ '1' if use_cached|default(False) else '0' }}">
+
+    <div class="controls">
+      <button type="submit" id="submitBtn" disabled>Run Extraction</button>
+      <button type="button" id="resetBtn" class="small">Reset</button>
+
+      <div class="point-options">
+        <label><input type="checkbox" id="cbA"> Mark point A as barrier</label>
+        <label><input type="checkbox" id="cbB"> Mark point B as barrier</label>
+      </div>
+
+      <button type="button" id="barrierToggle" class="small">Add barrier</button>
+      <div id="barrierList">Barriers: <span id="barrierCount">0</span></div>
+
+      <a href="/" class="small" style="display:inline-block; padding:8px 12px; border-radius:6px; text-decoration:none; color:#fff; background:#6c757d;">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<script>
+(function(){
+  const img = document.getElementById('annotImage');
+  const imageWrap = document.getElementById('imageWrap');
+  const markerA = document.getElementById('markerA');
+  const markerB = document.getElementById('markerB');
+  const x1i = document.getElementById('x1');
+  const y1i = document.getElementById('y1');
+  const x2i = document.getElementById('x2');
+  const y2i = document.getElementById('y2');
+  const submitBtn = document.getElementById('submitBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const loadingNotice = document.getElementById('loadingNotice');
+  const previewNotice = document.getElementById('previewNotice');
+  const cbA = document.getElementById('cbA');
+  const cbB = document.getElementById('cbB');
+  const barrierA = document.getElementById('barrierA');
+  const barrierB = document.getElementById('barrierB');
+  const barrierToggle = document.getElementById('barrierToggle');
+  const barriersField = document.getElementById('barriers');
+  const barrierCountSpan = document.getElementById('barrierCount');
+
+  let points = [];
+  let imgLoaded = false;
+  let imgFailed = false;
+  let barrierMode = false;
+  let barriers = []; // array of {x, y, id}
+  let barrierIdCounter = 0;
+  // original image size (template passes orig_w, orig_h) — use tojson to emit valid JS literals
+  const origW = {{ orig_w|default(0)|tojson }};
+  const origH = {{ orig_h|default(0)|tojson }};
+
+  function clientToImageCoords(clientX, clientY) {
+    const rect = img.getBoundingClientRect();
+    // clamp
+    const cx = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    const cy = Math.max(0, Math.min(clientY - rect.top, rect.height));
+    // Convert to image intrinsic size coordinates
+    const ratioX = img.naturalWidth / rect.width || 1;
+    const ratioY = img.naturalHeight / rect.height || 1;
+    return [Math.round(cx * ratioX), Math.round(cy * ratioY)];
+  }
+
+  img.addEventListener('load', function(){
+    imgLoaded = true;
+    if(loadingNotice) loadingNotice.style.display = 'none';
+    if(!img.naturalWidth || !img.naturalHeight){
+      imgFailed = true;
+      showLoadError();
+    }
+  });
+
+  img.addEventListener('error', function(){
+    imgFailed = true;
+    if(loadingNotice) loadingNotice.style.display = 'none';
+    showLoadError();
+  });
+
+  function showLoadError(){
+    const n = document.createElement('div');
+    n.className = 'warning';
+    n.innerHTML = 'Unable to display the preview in this browser. You can <a href="/uploads/{{ filename }}" target="_blank">open/download the original file</a> to view it, or upload a PNG/JPG instead.';
+    if(previewNotice) previewNotice.appendChild(n);
+  }
+
+  // Click handling: either add endpoint (first two clicks) or add barrier when in barrierMode
+  imageWrap.addEventListener('click', function(ev){
+    if(!imgLoaded || imgFailed) return;
+    // compute image coords in preview space
+    const [px, py] = clientToImageCoords(ev.clientX, ev.clientY);
+    // Map preview coords to original image coords if original size available
+    const scaleX = (origW > 0) ? (origW / img.naturalWidth) : 1;
+    const scaleY = (origH > 0) ? (origH / img.naturalHeight) : 1;
+    const ix = Math.round(px * scaleX);
+    const iy = Math.round(py * scaleY);
+
+    if(barrierMode){
+      addBarrier(ix, iy);
+      return;
+    }
+
+    if(points.length >= 2) return;
+    points.push([ix, iy]);
+    updateMarkers();
+  });
+
+  function addBarrier(ix, iy){
+    const id = barrierIdCounter++;
+    barriers.push({x: ix, y: iy, id});
+    drawBarrierMarker(ix, iy, id);
+    updateBarriersField();
+  }
+
+  function drawBarrierMarker(ix, iy, id){
+    const rect = img.getBoundingClientRect();
+    // Convert stored (original) coords back to preview display coords for marker placement
+    const displayX = (origW > 0) ? (ix / origW * rect.width + rect.left) : (ix / (img.naturalWidth || rect.width) * rect.width + rect.left);
+    const displayY = (origH > 0) ? (iy / origH * rect.height + rect.top) : (iy / (img.naturalHeight || rect.height) * rect.height + rect.top);
+
+    const el = document.createElement('div');
+    el.className = 'barrier-extra';
+    el.style.left = (displayX - rect.left) + 'px';
+    el.style.top = (displayY - rect.top) + 'px';
+    el.setAttribute('data-id', id);
+
+    // Clicking a barrier marker removes it
+    el.addEventListener('click', function(e){
+      e.stopPropagation();
+      const removeId = parseInt(this.getAttribute('data-id'));
+      removeBarrier(removeId);
+    });
+
+    imageWrap.appendChild(el);
+    updateBarrierCount();
+  }
+
+  function removeBarrier(id){
+    barriers = barriers.filter(b => b.id !== id);
+    const el = imageWrap.querySelector('[data-id="'+id+'"]');
+    if(el) el.remove();
+    updateBarriersField();
+    updateBarrierCount();
+  }
+
+  resetBtn.addEventListener('click', function(){
+    points = [];
+    cbA.checked = false;
+    cbB.checked = false;
+    barrierA.value = '0';
+    barrierB.value = '0';
+    barriers = [];
+    barrierIdCounter = 0;
+    // remove existing extra barrier DOM nodes
+    const extras = imageWrap.querySelectorAll('.barrier-extra');
+    extras.forEach(n => n.remove());
+    updateMarkers();
+    updateBarriersField();
+    updateBarrierCount();
+  });
+
+  // Barrier toggle
+  barrierToggle.addEventListener('click', function(){
+    barrierMode = !barrierMode;
+    if(barrierMode){
+      barrierToggle.classList.add('active');
+      barrierToggle.textContent = 'Adding barriers (click image)';
+    } else {
+      barrierToggle.classList.remove('active');
+      barrierToggle.textContent = 'Add barrier';
+    }
+  });
+
+  // Update barrier flags when checkboxes toggle
+  cbA.addEventListener('change', function(){
+    barrierA.value = cbA.checked ? '1' : '0';
+    updateMarkers();
+  });
+  cbB.addEventListener('change', function(){
+    barrierB.value = cbB.checked ? '1' : '0';
+    updateMarkers();
+  });
+
+  function updateBarriersField(){
+    // send as JSON array of [y,x] (row, col) pairs to match server/skeleton coordinates
+    const arr = barriers.map(b => [b.y, b.x]);
+    barriersField.value = JSON.stringify(arr);
+  }
+
+  function updateBarrierCount(){
+    barrierCountSpan.textContent = String(barriers.length);
+  }
+
+  function updateMarkers(){
+    markerA.style.display = 'none';
+    markerB.style.display = 'none';
+    submitBtn.disabled = true;
+    x1i.value = y1i.value = x2i.value = y2i.value = '';
+
+    // Clear barrier styling on A/B markers
+    markerA.classList.remove('barrier');
+    markerB.classList.remove('barrier');
+
+    if(points[0]){
+      const rect = img.getBoundingClientRect();
+      // Map original stored coords back to preview display coords
+      const displayX = (origW > 0) ? (points[0][0] / origW * rect.width + rect.left) : (points[0][0] / (img.naturalWidth || rect.width) * rect.width + rect.left);
+      const displayY = (origH > 0) ? (points[0][1] / origH * rect.height + rect.top) : (points[0][1] / (img.naturalHeight || rect.height) * rect.height + rect.top);
+      markerA.style.left = (displayX - rect.left) + 'px';
+      markerA.style.top = (displayY - rect.top) + 'px';
+      markerA.style.display = 'block';
+      x1i.value = points[0][0];
+      y1i.value = points[0][1];
+      // Apply barrier style if checked
+      if(cbA.checked) markerA.classList.add('barrier');
+    }
+    if(points[1]){
+      const rect = img.getBoundingClientRect();
+      const displayX = (origW > 0) ? (points[1][0] / origW * rect.width + rect.left) : (points[1][0] / (img.naturalWidth || rect.width) * rect.width + rect.left);
+      const displayY = (origH > 0) ? (points[1][1] / origH * rect.height + rect.top) : (points[1][1] / (img.naturalHeight || rect.height) * rect.height + rect.top);
+      markerB.style.left = (displayX - rect.left) + 'px';
+      markerB.style.top = (displayY - rect.top) + 'px';
+      markerB.style.display = 'block';
+      x2i.value = points[1][0];
+      y2i.value = points[1][1];
+      if(cbB.checked) markerB.classList.add('barrier');
+    }
+    if(points.length === 2) submitBtn.disabled = false;
+  }
+
+})();
+</script>
+</body>
+</html>
