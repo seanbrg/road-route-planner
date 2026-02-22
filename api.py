@@ -10,8 +10,24 @@ from PIL import Image
 import skimage.morphology
 import numpy as np
 import ShowShortestPath
-MODEL_PATH = "data/weights/unet.pth"
-IMAGE_PATH = "assets/demo_satellite.tiff"
+import gdown
+
+MODEL_DIR = "data/weights"
+MODEL_FILE = "unet.pth"
+MODEL_PATH = os.path.join(MODEL_DIR, MODEL_FILE)
+
+FILE_ID = "1_ItHrf1RvQbUHmQ320rMFuMcVtCpvBuu"
+URL = f"https://drive.google.com/uc?id={FILE_ID}"
+
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+if not os.path.exists(MODEL_PATH):
+    print("Downloading model weights...")
+    gdown.download(URL, MODEL_PATH, quiet=False)
+else:
+    print("Model weights already exist.")
+
+IMAGE_PATH = "output/demo_satellite.tiff"
 new_image=True
 # Cache for the last-processed image/skeleton so subsequent re-annotations can reuse it
 SKELETON_CACHE = {}
@@ -170,11 +186,11 @@ def process_image(image, min_size=40, epsilon=30, step_size=3):
 
     return skeleton
 
-def road_route_extraction(image_path,point1,point2,barriers=None, model_path="data/weights/unet.pth" ):
+def road_route_extraction(image_path,point1,point2,barriers=None ):
     print("point1",point1)
     print("point2",point2)
 
-    model = load_model(model_path)
+    model = load_model(MODEL_PATH)
     org_image = Image.open(image_path).convert("RGB")
     mask = predict_large_image(model, org_image, patch_size=512)
     mask_uint8 = (mask * 255).astype(np.uint8)
@@ -252,54 +268,3 @@ def find_closest_skeleton_point(skeleton, point):
     closest_point = skeleton_points[idx]
     return (int(closest_point[0]), int(closest_point[1]))
 
-if __name__ == "__main__":
-    # Quick demo runner: produce mask and skeleton, save them to output/, and display with matplotlib.
-    image_path = 'assets/converted_image.tiff'
-    point1 = (676, 396)
-    point2 = (1068, 389)
-
-    # Ensure output folder exists
-    os.makedirs('output', exist_ok=True)
-
-    # Run model inference (may be slow)
-    model = load_model("data/weights/unet.pth")
-    org_image = Image.open(image_path).convert("RGB")
-    mask = predict_large_image(model, org_image, patch_size=512)
-
-    # Convert mask to uint8 image (0-255)
-    mask_uint8 = (mask * 255).astype(np.uint8)
-
-    # Run skeletonization on the mask and ensure uint8 0/255 format
-    skeleton = process_image(mask_uint8)
-    sk_uint8 = (np.asarray(skeleton) > 0).astype(np.uint8) * 255
-
-    # Save outputs so you can inspect them later
-    try:
-        # Save mask (grayscale)
-        from PIL import Image as PilImage
-        PilImage.fromarray(mask_uint8).save(os.path.join('output', 'demo_mask.png'))
-        # Save skeleton
-        PilImage.fromarray(sk_uint8).save(os.path.join('output', 'demo_skeleton.png'))
-    except Exception as e:
-        print('Warning: failed to save demo outputs:', e)
-
-    # Display using matplotlib (works in many environments). Convert images for display.
-    try:
-        plt.figure(figsize=(12, 6))
-        plt.subplot(1, 2, 1)
-        # show original image (PIL -> array)
-        plt.imshow(np.array(org_image))
-        plt.title("Original Image (RGB)")
-        plt.axis('off')
-
-        plt.subplot(1, 2, 2)
-        plt.imshow(sk_uint8, cmap='gray')
-        plt.title("Skeleton (binary)")
-        plt.axis('off')
-
-        plt.tight_layout()
-        plt.show()
-    except Exception as e:
-        # If display fails (headless), just print where files are saved
-        print('Unable to display images with matplotlib:', e)
-        print('Saved outputs to output/demo_mask.png and output/demo_skeleton.png')

@@ -2,8 +2,23 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
 from src.model.inference import load_model, predict_large_image # CHANGED IMPORT
+import gdown
+import os
+MODEL_DIR = "data/weights"
+MODEL_FILE = "unet.pth"
+MODEL_PATH = os.path.join(MODEL_DIR, MODEL_FILE)
 
-MODEL_PATH = "data/weights/unet.pth"
+FILE_ID = "1_ItHrf1RvQbUHmQ320rMFuMcVtCpvBuu"
+URL = f"https://drive.google.com/uc?id={FILE_ID}"
+
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+if not os.path.exists(MODEL_PATH):
+    print("Downloading model weights...")
+    gdown.download(URL, MODEL_PATH, quiet=False)
+else:
+    print("Model weights already exist.")
+
 TEST_IMAGE_PATH = "assets/demo_satellite.tiff"
 
 # Load Model

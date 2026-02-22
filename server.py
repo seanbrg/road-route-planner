@@ -221,7 +221,7 @@ def process_annotation():
                 return render_template("result.html", error=f"Cached re-annotation failed: {e}", image_url=None)
         else:
             # Full processing: run model then compute annotation
-            result_img = api.road_route_extraction(str(saved_path), point1=(y1, x1), point2=(y2, x2), barriers=barriers, model_path=api.MODEL_PATH)
+            result_img = api.road_route_extraction(str(saved_path), point1=(y1, x1), point2=(y2, x2), barriers=barriers)
     except Exception as e:
         return render_template("result.html", error=str(e), image_url=None)
 
