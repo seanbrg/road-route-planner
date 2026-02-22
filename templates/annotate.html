@@ -45,6 +45,9 @@
     {% if use_cached|default(False) %}
       <div style="margin-top:8px;color:#2a7f2a">Using cached skeleton from previous run — model will not be re-run.</div>
     {% endif %}
+    {% if no_route|default(False) %}
+      <div style="margin-top:8px;color:#a00;font-weight:bold;">No route was found for the previously selected points — please select two different points or adjust barriers and click "Run Extraction" to try again.</div>
+    {% endif %}
   </div>
 
   <form id="pointsForm" action="/process" method="post">
@@ -66,8 +69,7 @@
       <button type="button" id="resetBtn" class="small">Reset</button>
 
       <div class="point-options">
-        <label><input type="checkbox" id="cbA"> Mark point A as barrier</label>
-        <label><input type="checkbox" id="cbB"> Mark point B as barrier</label>
+        <!-- Checkboxes removed to simplify UI; hidden barrier fields are still submitted if needed -->
       </div>
 
       <button type="button" id="barrierToggle" class="small">Add barrier</button>
@@ -92,8 +94,6 @@
   const resetBtn = document.getElementById('resetBtn');
   const loadingNotice = document.getElementById('loadingNotice');
   const previewNotice = document.getElementById('previewNotice');
-  const cbA = document.getElementById('cbA');
-  const cbB = document.getElementById('cbB');
   const barrierA = document.getElementById('barrierA');
   const barrierB = document.getElementById('barrierB');
   const barrierToggle = document.getElementById('barrierToggle');
@@ -204,8 +204,6 @@
 
   resetBtn.addEventListener('click', function(){
     points = [];
-    cbA.checked = false;
-    cbB.checked = false;
     barrierA.value = '0';
     barrierB.value = '0';
     barriers = [];
@@ -230,15 +228,6 @@
     }
   });
 
-  // Update barrier flags when checkboxes toggle
-  cbA.addEventListener('change', function(){
-    barrierA.value = cbA.checked ? '1' : '0';
-    updateMarkers();
-  });
-  cbB.addEventListener('change', function(){
-    barrierB.value = cbB.checked ? '1' : '0';
-    updateMarkers();
-  });
 
   function updateBarriersField(){
     // send as JSON array of [y,x] (row, col) pairs to match server/skeleton coordinates
@@ -270,8 +259,6 @@
       markerA.style.display = 'block';
       x1i.value = points[0][0];
       y1i.value = points[0][1];
-      // Apply barrier style if checked
-      if(cbA.checked) markerA.classList.add('barrier');
     }
     if(points[1]){
       const rect = img.getBoundingClientRect();
@@ -282,7 +269,6 @@
       markerB.style.display = 'block';
       x2i.value = points[1][0];
       y2i.value = points[1][1];
-      if(cbB.checked) markerB.classList.add('barrier');
     }
     if(points.length === 2) submitBtn.disabled = false;
   }

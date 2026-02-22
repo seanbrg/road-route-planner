@@ -3,7 +3,8 @@ import uuid
 from pathlib import Path
 from flask import Flask, request, redirect, url_for, send_from_directory, render_template, flash
 from werkzeug.utils import secure_filename
-
+from PIL import Image
+import numpy as np
 # Import the existing API module (do not modify it)
 import api
 
@@ -15,6 +16,15 @@ api.plt.show = lambda *args, **kwargs: None
 # Create app
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
+
+# Development error handler: return full traceback for unhandled exceptions to aid debugging.
+import traceback
+@app.errorhandler(Exception)
+def handle_exception(e):
+    tb = traceback.format_exc()
+    print('Unhandled exception in request:\n', tb)
+    # Return a simple HTML page with the traceback for debugging (development only)
+    return f"<h1>Internal Server Error</h1><pre>{tb}</pre>", 500
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = BASE_DIR / "uploads"
@@ -29,6 +39,8 @@ app.config["OUTPUT_FOLDER"] = str(OUTPUT_FOLDER)
 
 # Map result image filename -> original uploaded unique filename so we can re-annotate
 RESULT_MAP = {}
+# Map result image filename -> saved skeleton filename (if any)
+RESULT_SKELETON = {}
 
 
 def allowed_file(filename: str) -> bool:
@@ -123,6 +135,19 @@ def uploaded_file(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
+# Serve files from the repository assets/ directory (e.g., assets/smile.png)
+@app.route('/assets/<path:filename>')
+def asset_file(filename):
+    assets_dir = BASE_DIR / 'assets'
+    return send_from_directory(str(assets_dir), filename)
+
+
+# Serve generated output files (annotated images and path JSON)
+@app.route('/output/<path:filename>')
+def output_file(filename):
+    return send_from_directory(app.config['OUTPUT_FOLDER'], filename)
+
+
 # Process route: receives filename and two points, runs road_route_extraction, and saves result
 @app.route('/process', methods=["POST"])
 def process_annotation():
@@ -195,18 +220,37 @@ def process_annotation():
     except Exception as e:
         return render_template("result.html", error=str(e), image_url=None)
 
-    if result_img is None:
-        return render_template("result.html", error="Processing returned no image", image_url=None)
-
     # Save returned image (could be a grayscale mask or a colored BGR/RGB image)
-    from PIL import Image
-    import numpy as np
+
 
     # API may return (image, path_coords) or just the image. Handle both.
     path_coords = None
     annotated_img = result_img
     if isinstance(result_img, (list, tuple)) and len(result_img) == 2:
         annotated_img, path_coords = result_img
+
+    # If the annotated image is None, that means no path was found. Let the user re-select points on the same image
+    if annotated_img is None:
+        # Build preview name created at upload time (unique_name.preview.png)
+        preview_name = f"{filename}.preview.png"
+        preview_path = UPLOAD_FOLDER / preview_name
+        preview_failed = False
+        if not preview_path.exists():
+            # fallback to original uploaded file (may be displayable)
+            preview_name = filename
+            preview_failed = True
+
+        # Determine original image size so the client can map preview coords back to original coords
+        try:
+            from PIL import Image as PilImage
+            orig_img = PilImage.open(str(saved_path))
+            orig_w, orig_h = orig_img.size
+        except Exception:
+            orig_w, orig_h = 0, 0
+
+        image_url = url_for('uploaded_file', filename=preview_name)
+        # Render annotate template with use_cached so the server will reuse the cached skeleton
+        return render_template('annotate.html', image_url=image_url, filename=filename, preview_failed=preview_failed, orig_w=orig_w or 0, orig_h=orig_h or 0, use_cached=True, no_route=True)
 
     try:
         arr = np.array(annotated_img)
@@ -254,6 +298,26 @@ def process_annotation():
     except Exception:
         path_json_name = None
 
+    # Save skeleton image if it's cached for this uploaded image_path
+    skeleton_filename = None
+    try:
+        cache_key = str(saved_path)
+        cached = getattr(api, 'SKELETON_CACHE', {}).get(cache_key)
+        if cached is not None:
+            sk = cached[0]
+            # convert skeleton to uint8 image (0/255)
+            import numpy as _np
+            from PIL import Image as _PilImage
+            sk_arr = _np.array(sk)
+            # normalize boolean or 0/1/255 -> 0/255
+            sk_bin = (_np.asarray(sk_arr) > 0).astype(_np.uint8) * 255
+            skeleton_filename = out_filename.rsplit('.', 1)[0] + '.skeleton.png'
+            _PilImage.fromarray(sk_bin).save(str(OUTPUT_FOLDER / skeleton_filename))
+            # record mapping so show_result can find it
+            RESULT_SKELETON[out_filename] = skeleton_filename
+    except Exception:
+        skeleton_filename = None
+
     return redirect(url_for("show_result", filename=out_filename))
 
 
@@ -285,6 +349,7 @@ def reannotate(result_filename):
     return render_template('annotate.html', image_url=image_url, filename=orig, preview_failed=preview_failed, orig_w=orig_w or 0, orig_h=orig_h or 0, use_cached=True)
 
 
+@app.route('/result/<path:filename>')
 def show_result(filename):
     image_url = url_for("output_file", filename=filename)
     # If we know the original upload for this result, expose a re-annotate link
@@ -298,16 +363,25 @@ def show_result(filename):
     if (OUTPUT_FOLDER / path_json_name).exists():
         path_url = url_for('output_file', filename=path_json_name)
 
-    # Provide URL to the walker image (uploads/man.png) if present
+    # Provide URL to the walker image (assets/smile.png) if present
     walker_url = None
     try:
-        walker_path = UPLOAD_FOLDER / 'man.png'
+        walker_path = BASE_DIR / 'assets' / 'smile.png'
         if walker_path.exists():
-            walker_url = url_for('uploaded_file', filename='man.png')
+            walker_url = url_for('asset_file', filename='smile.png')
     except Exception:
         walker_url = None
 
-    return render_template("result.html", image_url=image_url, error=None, reannotate_url=reannotate_url, result_filename=filename, path_url=path_url, walker_url=walker_url)
+    # Provide URL to skeleton image if it was saved (look up in RESULT_SKELETON)
+    skeleton_url = None
+    try:
+        candidate = RESULT_SKELETON.get(filename, filename.rsplit('.',1)[0] + '.skeleton.png')
+        if candidate and (OUTPUT_FOLDER / candidate).exists():
+            skeleton_url = url_for('output_file', filename=candidate)
+    except Exception:
+        skeleton_url = None
+
+    return render_template("result.html", image_url=image_url, error=None, reannotate_url=reannotate_url, result_filename=filename, path_url=path_url, walker_url=walker_url, skeleton_url=skeleton_url)
 
 if __name__ == "__main__":
     # Run the Flask development server bound to the requested local IP so other machines

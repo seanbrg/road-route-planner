@@ -43,40 +43,68 @@ class ShortestPathSolver:
         if self.graph is None or barrier_coord is None:
             return
 
+        # Support passing a single (y,x) or an iterable of (y,x) barrier coordinates
+        pts = []
         try:
-            p_coords = np.array(barrier_coord, dtype=float)
+            # If it's an iterable of iterables (e.g., list of [y,x]), treat as multiple
+            if isinstance(barrier_coord, (list, tuple, np.ndarray)) and len(barrier_coord) > 0 and isinstance(barrier_coord[0], (list, tuple, np.ndarray)):
+                for b in barrier_coord:
+                    pts.append(np.array(b, dtype=float))
+            else:
+                pts.append(np.array(barrier_coord, dtype=float))
         except Exception:
-            print(f"Warning: malformed barrier coordinate {barrier_coord}, skipping")
+            print(f"Warning: malformed barrier coordinate(s) {barrier_coord}, skipping")
             return
 
-        if p_coords.size != 2:
-            print(f"Warning: barrier coordinate must be (y,x), got {barrier_coord}, skipping")
-            return
+        nodes_to_remove = set()
+        edges_to_remove = set()
 
-        nodes_to_remove = []
-        edges_to_remove = []
-
-        for n, data in list(self.graph.nodes(data=True)):
-            pos = np.array(data.get('pos', None))
-            if pos is None:
+        for p_coords in pts:
+            if p_coords.size != 2:
+                print(f"Warning: barrier coordinate must be (y,x), got {p_coords}, skipping")
                 continue
-            if np.linalg.norm(p_coords - pos) <= block_radius:
-                nodes_to_remove.append(n)
 
-        for u, v, data in list(self.graph.edges(data=True)):
-            pos_u = np.array(self.graph.nodes[u]['pos'])
-            pos_v = np.array(self.graph.nodes[v]['pos'])
-            dist = self.point_to_line_dist(p_coords, pos_u, pos_v)
-            if dist <= block_radius:
-                edges_to_remove.append((u, v))
+            # Collect nodes to remove
+            for n, data in list(self.graph.nodes(data=True)):
+                pos = data.get('pos', None)
+                if pos is None:
+                    continue
+                pos_arr = np.array(pos, dtype=float)
+                try:
+                    if np.linalg.norm(p_coords - pos_arr) <= block_radius:
+                        nodes_to_remove.add(n)
+                except Exception:
+                    # skip malformed positions
+                    continue
 
+            # Collect edges to remove
+            for u, v, data in list(self.graph.edges(data=True)):
+                try:
+                    pos_u = np.array(self.graph.nodes[u]['pos'], dtype=float)
+                    pos_v = np.array(self.graph.nodes[v]['pos'], dtype=float)
+                except Exception:
+                    continue
+                try:
+                    dist = self.point_to_line_dist(p_coords, pos_u, pos_v)
+                    if dist <= block_radius:
+                        edges_to_remove.add((u, v))
+                except Exception:
+                    continue
+
+        # Remove edges first, then nodes
         for u, v in edges_to_remove:
             if self.graph.has_edge(u, v):
-                self.graph.remove_edge(u, v)
+                try:
+                    self.graph.remove_edge(u, v)
+                except Exception:
+                    pass
 
-        for n in nodes_to_remove:
+        for n in list(nodes_to_remove):
             if self.graph.has_node(n):
-                self.graph.remove_node(n)
+                try:
+                    self.graph.remove_node(n)
+                except Exception:
+                    pass
 
     def find_shortest_path(self, start_coords, end_coords):
         if self.graph is None:
@@ -214,8 +242,32 @@ def get_satellite_navigation_map(satellite_img, skeleton_matrix, start, end, bar
     # Normalize skeleton to binary 0/1
     if skeleton_matrix is None:
         return None
+    skeleton_copy = skeleton_matrix.copy()
+    # If barriers provided, zero a small disk around each barrier location to robustly cut the skeleton.
+    if barriers:
+        # Ensure we have a uint8 image for cv2 drawing (0/255)
+        try:
+            sk_tmp = (skeleton_copy > 0).astype('uint8') * 255
+        except Exception:
+            sk_tmp = np.array(skeleton_copy, dtype='uint8')
 
-    sk = np.array(skeleton_matrix)
+        for b in (barriers or []):
+            try:
+                y = int(b[0]); x = int(b[1])
+            except Exception:
+                continue
+            if 0 <= y < sk_tmp.shape[0] and 0 <= x < sk_tmp.shape[1]:
+                # draw filled circle (note cv2 expects (x,y) center)
+                try:
+                    cv2.circle(sk_tmp, (x, y), block_radius, 0, thickness=-1)
+                except Exception:
+                    # fallback: clear single pixel
+                    sk_tmp[y, x] = 0
+
+        # Convert back to original-like skeleton copy
+        skeleton_copy = sk_tmp
+
+    sk = np.array(skeleton_copy)
     if sk.dtype != np.uint8:
         sk = (sk > 0).astype(np.uint8)
     else:
@@ -235,9 +287,17 @@ def get_satellite_navigation_map(satellite_img, skeleton_matrix, start, end, bar
     solver.convert(sk)
 
     # Apply barriers
+    # Apply barriers to the graph level once (solver.block_road accepts iterables)
     if barriers:
-        for b in barriers:
-            solver.block_road(b, block_radius=block_radius)
+        try:
+            solver.block_road(barriers, block_radius=block_radius)
+        except Exception:
+            # fallback: try per-barrier removal
+            for b in barriers:
+                try:
+                    solver.block_road(b, block_radius=block_radius)
+                except Exception:
+                    pass
 
     # Calculate path
     path_coords = solver.find_shortest_path(start, end)

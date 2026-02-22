@@ -168,10 +168,6 @@ def process_image(image, min_size=40, epsilon=30, step_size=3):
         if cos_similarity < -0.1 :  # Threshold for similarity
             connect_points(skeleton, pt1, pt2)
 
-    cv2.imshow('image', image)
-    os.makedirs('output', exist_ok=True)
-    #cv2.imwrite(os.path.join('output', os.path.basename(image_path)), skeleton.astype(np.uint8) * 255)
-
     return skeleton
 
 def road_route_extraction(image_path,point1,point2,barriers=None, model_path="data/weights/unet.pth" ):
@@ -190,6 +186,10 @@ def road_route_extraction(image_path,point1,point2,barriers=None, model_path="da
 
     point1 = find_closest_skeleton_point(skeleton, point1)
     point2 = find_closest_skeleton_point(skeleton, point2)
+
+
+    barriers = [find_closest_skeleton_point(skeleton, b) for b in barriers]
+
     print("new point1", point1)
     print("new point2", point2)
 
@@ -253,20 +253,53 @@ def find_closest_skeleton_point(skeleton, point):
     return (int(closest_point[0]), int(closest_point[1]))
 
 if __name__ == "__main__":
-    newpoint1=(643, 414)
-    newpoint2=(965, 360)
-    skeleton_path= "output/result_81c6b838568d45ea95f5c5d2589f778f_demo_satellite.png"
-    skeleton_image = cv2.imread("output/0d5961a819634be996f4161f15806aa5_demo_satellite.png", cv2.IMREAD_GRAYSCALE)
-    #print shape
-    print("Skeleton shape:", skeleton_image.shape)
-    print("point1",skeleton_image[newpoint1[0], newpoint1[1]])
-    print("point2",skeleton_image[newpoint2[0], newpoint2[1]])
+    # Quick demo runner: produce mask and skeleton, save them to output/, and display with matplotlib.
+    image_path = 'assets/converted_image.tiff'
+    point1 = (676, 396)
+    point2 = (1068, 389)
 
-    image_path = 'assets/demo_satellite.tiff'
-    point1=(676, 396)
-    point2=(1068, 389)
-    annotated = road_route_extraction(image_path, point1, point2, model_path=MODEL_PATH)
-    plt.imshow(annotated)
-    plt.title("Annotated Shortest Path")
-    plt.axis('off')
-    plt.show()
+    # Ensure output folder exists
+    os.makedirs('output', exist_ok=True)
+
+    # Run model inference (may be slow)
+    model = load_model("data/weights/unet.pth")
+    org_image = Image.open(image_path).convert("RGB")
+    mask = predict_large_image(model, org_image, patch_size=512)
+
+    # Convert mask to uint8 image (0-255)
+    mask_uint8 = (mask * 255).astype(np.uint8)
+
+    # Run skeletonization on the mask and ensure uint8 0/255 format
+    skeleton = process_image(mask_uint8)
+    sk_uint8 = (np.asarray(skeleton) > 0).astype(np.uint8) * 255
+
+    # Save outputs so you can inspect them later
+    try:
+        # Save mask (grayscale)
+        from PIL import Image as PilImage
+        PilImage.fromarray(mask_uint8).save(os.path.join('output', 'demo_mask.png'))
+        # Save skeleton
+        PilImage.fromarray(sk_uint8).save(os.path.join('output', 'demo_skeleton.png'))
+    except Exception as e:
+        print('Warning: failed to save demo outputs:', e)
+
+    # Display using matplotlib (works in many environments). Convert images for display.
+    try:
+        plt.figure(figsize=(12, 6))
+        plt.subplot(1, 2, 1)
+        # show original image (PIL -> array)
+        plt.imshow(np.array(org_image))
+        plt.title("Original Image (RGB)")
+        plt.axis('off')
+
+        plt.subplot(1, 2, 2)
+        plt.imshow(sk_uint8, cmap='gray')
+        plt.title("Skeleton (binary)")
+        plt.axis('off')
+
+        plt.tight_layout()
+        plt.show()
+    except Exception as e:
+        # If display fails (headless), just print where files are saved
+        print('Unable to display images with matplotlib:', e)
+        print('Saved outputs to output/demo_mask.png and output/demo_skeleton.png')
