@@ -31,7 +31,7 @@
   <p class="hint">Click two points on the image where you'd like to indicate the route endpoints. Optionally mark either point as a barrier (blocking the path). You can also add extra barrier points by toggling Add Barrier mode and clicking the image. You may reset selection and try again.</p>
 
   <div id="imageWrap">
-    <img id="annotImage" src="{{ image_url }}" alt="Upload" crossorigin="anonymous">
+    <img id="annotImage" src="{{ image_url }}" alt="Upload" crossorigin="anonymous" data-orig-w="{{ orig_w|default(0) }}" data-orig-h="{{ orig_h|default(0) }}">
     <div id="markerA" class="marker a" style="display:none;"></div>
     <div id="markerB" class="marker b" style="display:none;"></div>
   </div>
@@ -43,10 +43,10 @@
       <div id="loadingNotice">Loading preview...</div>
     {% endif %}
     {% if use_cached|default(False) %}
-      <div style="margin-top:8px;color:#2a7f2a">Using cached skeleton from previous run — model will not be re-run.</div>
+      <div style="margin-top:8px;color:#2a7f2a">Using cached skeleton from previous run , model will not be re-run.</div>
     {% endif %}
     {% if no_route|default(False) %}
-      <div style="margin-top:8px;color:#a00;font-weight:bold;">No route was found for the previously selected points — please select two different points or adjust barriers and click "Run Extraction" to try again.</div>
+      <div style="margin-top:8px;color:#a00;font-weight:bold;">No route was found for the previously selected points , please select two different points or adjust barriers and click "Run Extraction" to try again.</div>
     {% endif %}
   </div>
 
@@ -106,9 +106,9 @@
   let barrierMode = false;
   let barriers = []; // array of {x, y, id}
   let barrierIdCounter = 0;
-  // original image size (template passes orig_w, orig_h) — use tojson to emit valid JS literals
-  const origW = {{ orig_w|default(0)|tojson }};
-  const origH = {{ orig_h|default(0)|tojson }};
+  // original image size (passed as data attributes on the image element)
+  const origW = parseInt(img.dataset.origW || 0, 10) || 0;
+  const origH = parseInt(img.dataset.origH || 0, 10) || 0;
 
   function clientToImageCoords(clientX, clientY) {
     const rect = img.getBoundingClientRect();

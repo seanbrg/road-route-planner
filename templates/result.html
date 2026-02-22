@@ -18,9 +18,9 @@
   <h1>Extraction Result</h1>
   {% if error and image_url %}
     <p style="color: #c00; text-align:center; font-weight:bold;">{{ error }}</p>
-    <div id="resultWrap" style="text-align:center;">
+    <div id="resultWrapFallback" style="text-align:center;">
       <div style="display:inline-block; position:relative;">
-        <img id="resultImage" src="{{ image_url }}" alt="Result image">
+        <img id="resultImageFallback" src="{{ image_url }}" alt="Result image">
         {% if skeleton_url %}
           <img id="skeletonOverlay" src="{{ skeleton_url }}" alt="skeleton" style="position:absolute; left:0; top:0; display:none; width:100%; height:100%; opacity:0.8; mix-blend-mode: multiply; pointer-events:none;">
         {% endif %}
@@ -38,9 +38,9 @@
     </div>
   {% else %}
     <p>Here is the skeletonized road mask extracted from your image:</p>
-    <div id="resultWrap" style="text-align:center;">
+    <div id="resultWrapMain" style="text-align:center;">
       <div style="display:inline-block; position:relative;">
-        <img id="resultImage" src="{{ image_url }}" alt="Result image">
+        <img id="resultImageMain" src="{{ image_url }}" alt="Result image">
         <!-- walker will be positioned absolutely over the image -->
         {% if walker_url and path_url %}
           <img id="walker" src="{{ walker_url }}" alt="walker" style="position:absolute; left:0; top:0; transform: translate(-50%,-50%); display:none; pointer-events:none;">
@@ -59,7 +59,7 @@
     {% if path_url and walker_url %}
     <script>
     (function(){
-      const img = document.getElementById('resultImage');
+      const img = document.getElementById('resultImageMain');
       const walker = document.getElementById('walker');
       const pathUrl = '{{ path_url }}';
 

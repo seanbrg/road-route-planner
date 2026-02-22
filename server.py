@@ -17,6 +17,11 @@ api.plt.show = lambda *args, **kwargs: None
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
 
+# When packaged or run from a different current working directory, Flask may not find the
+# templates directory automatically; explicitly point Flask at the repository templates
+# folder so render_template works regardless of CWD or exe wrapper.
+#app.template_folder = str(Path(__file__).resolve().parent / 'templates')
+
 # Development error handler: return full traceback for unhandled exceptions to aid debugging.
 import traceback
 @app.errorhandler(Exception)
